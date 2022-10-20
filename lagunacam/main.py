@@ -45,8 +45,8 @@ def parse_args():
     parser.add_argument(
         "-log",
         "--log",
-        default="warning",
-        help="Provide logging level <debug>. Default warning",
+        default="info",
+        help="Provide logging level <debug>. Default info",
     )
     parser.add_argument(
         "--interval",
@@ -70,6 +70,13 @@ def parse_args():
         type=size,
         help="Set video resolution <width,height>. Default 1920,1080",
     )
+    parser.add_argument(
+        "--setup-time",
+        default=120,
+        type=int,
+        help="Setup time in seconds. Default 120",
+    )
+
     args = parser.parse_args()
 
     levels = {
@@ -91,6 +98,7 @@ def parse_args():
         args.interval,
         args.duration,
         args.size,
+        args.setup_time,
     )
 
 
@@ -102,7 +110,7 @@ def record(width, height, duration):
         delete=False, mode="w+", suffix=".h264"
     ) as output_path:
         command = [
-            "raspivid",
+            "/opt/vc/bin/raspivid",
             "-t",
             f"{duration}",
             "-w",
@@ -145,10 +153,10 @@ def encode(input_path):
             "-y",
             "-i",
             str(input_path.name),
-            "-preset",
-            "ultrafast",
-            "-qp",
-            "0",
+            # "-preset",
+            # "ultrafast",
+            # "-qp",
+            # "0",
             str(output_path.name),
         ]
 
@@ -172,14 +180,16 @@ def encode(input_path):
 
 
 def upload(input_path):
-    user = "stahl"
-    # server = "192.168.1.42"
-    # server = "10.35.0.159"
-    server = "10.35.0.182"
-
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H_%M_%S")
     filename = f"laboratorio_laguna_cam_{timestamp}.mp4"
+
+    # user = "laboratoriolaguna.net"
+    # server = "ssh.gb.stackcp.com"
+    # upload_relative_path = f"public_html/web/files/videos/{filename}"
+    user = "stahl"
+    server = "10.35.0.182"
     upload_relative_path = f"temp/venedig/{filename}"
+
     destination = f"{user}@{server}:{upload_relative_path}"
 
     command = [
@@ -221,35 +231,73 @@ def create_video_task(size=Arg("size"), duration=Arg("duration")):
         log.info(f"Successfully created {filename}")
 
 
+def startup(width, height, setup_time):
+    fps = 25
+    bitrate = int(15e6)
+    duration = setup_time * 1000
+    command = [
+        "/opt/vc/bin/raspivid",
+        "-t",
+        f"{duration}",
+        "-w",
+        f"{width}",
+        "-h",
+        f"{height}",
+        "-fps",
+        f"{fps}",
+        "-b",
+        f"{bitrate}",
+    ]
+    try:
+        log.info(
+            f"Start camera output for manual focus setup for {int(duration/1000)} seconds."
+        )
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+        )
+        log.info(f"Manual setup phase done.")
+    except subprocess.CalledProcessError as e:
+        raise LagunaCamException(
+            f"Unable to complete setup phase. Command was: {e.cmd}. Exit code: {e.returncode}.\nError output: {e.stderr.decode()}"
+        )
+
+
 if __name__ == "__main__":
     (
         log_level,
         interval,
         duration,
         size,
+        setup_time,
     ) = parse_args()
 
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%d-%H_%M_%S')
+    # setup log
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H_%M_%S")
     logging.basicConfig(
-        format='%(levelname)s:%(asctime)s %(message)s',
-        datefmt='%m/%d/%Y %I:%M:%S %p',
+        format="%(levelname)s:%(asctime)s %(message)s",
+        datefmt="%m/%d/%Y %I:%M:%S %p",
         level=log_level,
     )
     log = logging.getLogger("lagunacam")
-    handler = TimedRotatingFileHandler("lagunacam.log",
-                                       when="m",
-                                       interval=1,
-                                       backupCount=5)
+    Path("./logs").mkdir(parents=True, exist_ok=True)
+    logfile = Path("./logs/lagunacam.log")
+    handler = TimedRotatingFileHandler(logfile, when="d", interval=3, backupCount=5)
     log.addHandler(handler)
-    
 
+    startup(
+        width=size[0],
+        height=size[1],
+        setup_time=setup_time,
+    )  # startup is called once to manually setup the camera focus
+
+    # start recurring task
     app.params(
         size=size,
         duration=duration,
     )
-
     app.session.create_task(
         start_cond=interval, name="create a video", func=create_video_task
     )
-
     app.run()

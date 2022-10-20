@@ -1,0 +1,11 @@
+[Unit]
+Description=Start laguna cam recording service
+Wants=network-online.target
+After=network-online.target nss-lookup.target
+
+[Service]
+ExecStart=/bin/bash -c '/usr/bin/setterm -term linux -foreground black -blank 0 -powerdown 0 -clear all > /dev/tty0 && cd /root/lagunacam/ && /root/lagunacam/env/bin/python /root/lagunacam/main.py'
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
